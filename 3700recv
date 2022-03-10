@@ -8,6 +8,8 @@ class Receiver:
         self.socket.bind(('0.0.0.0', 0))
         self.port = self.socket.getsockname()[1]
         self.log("Bound to port %d" % self.port)
+        self.sequence_nums = []
+        self.buffer = []
 
         self.remote_host = None
         self.remote_port = None
@@ -16,8 +18,42 @@ class Receiver:
         self.socket.sendto(json.dumps(message).encode('utf-8'), (self.remote_host, self.remote_port))
 
     def log(self, message):
-        sys.stderr.write(message + "\n")
+        sys.stderr.write(str(message) + "\n")
         sys.stderr.flush()
+
+    def update_sequence_nums(self, msg):
+        self.sequence_nums.append(msg["sequence_number"])
+
+    def print_and_send_message(self, msg):
+        # Print out the data to stdout
+        print(msg["data"], end='', flush=True)
+     
+        # Always send back an ack
+        self.send({ "type": "ack", "num": msg["sequence_number"] })
+
+    def is_sequence_num_in_buff(self, sequence_num):
+        for msg in self.buffer:
+            if sequence_num == msg["sequence_number"]:
+                return True
+        return False
+
+    def is_duplicate(self, msg):
+        return msg["sequence_number"] in self.sequence_nums or self.is_sequence_num_in_buff(msg["sequence_number"])
+
+    def is_out_of_order(self, msg):
+        return self.sequence_nums[-1] + 1 != msg["sequence_number"]
+
+    def fix_out_of_order_with_buff(self):
+        #TODO: Maybe sort buffer by sequence num first
+        to_remove = []
+        for msg in self.buffer:
+            if not self.is_out_of_order(msg):
+                self.update_sequence_nums(msg)
+                self.print_and_send_message(msg)
+                to_remove.append(msg)
+
+        for msg in to_remove:
+            self.buffer.remove(msg)
 
     def run(self):
         while True:
@@ -31,13 +67,26 @@ class Receiver:
                     self.remote_port = addr[1]
 
                 msg = json.loads(data.decode('utf-8'))
+
+                # duplicate message, so continue
+                if self.is_duplicate(msg):
+                    continue
+        
                 self.log("Received data message %s" % msg)
 
-                # Print out the data to stdout
-                print(msg["data"], end='', flush=True)
+                # if out of order message, try to fix ordering using buffer and then see if it is still out of order
+                if self.sequence_nums and self.is_out_of_order(msg):
+                    self.fix_out_of_order_with_buff()
+                    if self.is_out_of_order(msg):
+                        self.buffer.append(msg)
+                        continue
+    
+                self.update_sequence_nums(msg)
+                self.print_and_send_message(msg)
 
-                # Always send back an ack
-                self.send({ "type": "ack" })
+                # try to fix out of order msg again (performance enhancement in practice)
+                self.fix_out_of_order_with_buff()
+                
 
 
         return

@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math
+import argparse, socket, time, json, select, struct, sys, math, random
 
 DATA_SIZE = 1375
 
@@ -12,6 +12,10 @@ class Sender:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
         self.waiting = False
+        self.sequence_number = 0
+        self.current_window_size = 0
+        self.max_window_size = 4
+        self.sequence_num_to_ack = {}
 
     def log(self, message):
         sys.stderr.write(message + "\n")
@@ -19,6 +23,29 @@ class Sender:
 
     def send(self, message):
         self.socket.sendto(json.dumps(message).encode('utf-8'), (self.host, self.remote_port))
+
+    def decrease_window_size(self):
+        # We recieved an ack back, so we know reciever recieved message, so take it out of our window
+        # effectively making our window size smaller by 1
+        self.current_window_size -= 1
+
+    def increase_window_size(self):
+        # We send a message out, so we have another message in our network, so increase window size by 1
+        self.current_window_size += 1
+
+    def update_waiting_status(self):
+        # if our window size is under max, we must have recieved an ack, so slide window forward so we can send another
+        if self.current_window_size < self.max_window_size:
+            self.waiting = False
+        # if our window size is our max, we don't have any room left in our window, so wait
+        elif self.current_window_size == self.max_window_size:
+            self.waiting = True
+    
+    def all_messages_acked(self):
+        for ack_status in self.sequence_num_to_ack.values():
+            if not ack_status:
+                return False
+        return True
 
     def run(self):
         while True:
@@ -29,19 +56,28 @@ class Sender:
                 if conn == self.socket:
                     k, addr = conn.recvfrom(65535)
                     msg = k.decode('utf-8')
-
+                    msgj = json.loads(msg)
                     self.log("Received message '%s'" % msg)
-                    self.waiting = False
+                    self.decrease_window_size()
+                    self.update_waiting_status()
+                    self.sequence_num_to_ack[msgj["num"]] = True
+
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
-                    if len(data) == 0:
+                    # don't exit unless we have recieved an ACK back for every packet we have sent
+                    if len(data) == 0 and self.all_messages_acked():
                         self.log("All done!")
                         sys.exit(0)
-
-                    msg = { "type": "msg", "data": data }
+                    elif len(data) == 0:
+                        continue
+                
+                    self.sequence_number = self.sequence_number + 1
+                    msg = { "type": "msg", "data": data, "sequence_number": self.sequence_number, "window_size": self.max_window_size }
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
-                    self.waiting = True
+                    self.increase_window_size()
+                    self.update_waiting_status()
+                    self.sequence_num_to_ack[self.sequence_number] = False
 
         return
 
