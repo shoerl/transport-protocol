@@ -64,8 +64,12 @@ class Receiver:
                     self.remote_host = addr[0]
                     self.remote_port = addr[1]
 
-                msg = json.loads(data.decode('utf-8'))
+                try:
+                    msg = json.loads(data.decode('utf-8'))
+                except:
+                    continue
                 self.log("Received data message %s" % msg)
+                self.log("data length is: %d" % len(msg['data']))
 
                 # Always send ACK
                 self.send({ "type": "ack", "num": msg["sequence_number"] })

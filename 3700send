@@ -65,14 +65,19 @@ class Sender:
                 if conn == self.socket:
                     k, addr = conn.recvfrom(65535)
                     msg = k.decode('utf-8')
-                    msgj = json.loads(msg)
+                    try:
+                        msgj = json.loads(msg)
+                    except:
+                        # corrupted packet
+                        continue
                     self.log("Received message '%s'" % msg)
                     # If this is a duplicate ack, don't mess with window size or waiting status and just continue to next
                     if self.sequence_num_to_ack[msgj["num"]]:
                         continue
                     self.decrease_window_size()
-                    self.log(self.sequence_num_to_ack)
-                    self.log("Window size is '%d'" % self.current_window_size)
+                    #TODO: delete msg from message cache since we know we got a valid ack back here
+                    #self.log(self.sequence_num_to_ack)
+                    #self.log("Window size is '%d'" % self.current_window_size)
                     self.update_waiting_status()
                     self.sequence_num_to_ack[msgj["num"]] = True
 
@@ -82,11 +87,12 @@ class Sender:
                     if len(data) == 0 and self.current_window_size == 0:
                         self.log("All done!")
                         sys.exit(0)
+                    # If no more data to send but haven't recieved ack back for everything, just continue
                     elif len(data) == 0:
                         continue
                 
                     self.sequence_number = self.sequence_number + 1
-                    msg = { "type": "msg", "data": data, "sequence_number": self.sequence_number, "window_size": self.max_window_size }
+                    msg = { "type": "msg", "data": data, "data_length": len(data), "sequence_number": self.sequence_number }
                     self.message_cache.append((msg, datetime.now()))
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
