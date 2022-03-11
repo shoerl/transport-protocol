@@ -1,6 +1,7 @@
 #!/usr/bin/env -S python3 -u
 
 import argparse, socket, time, json, select, struct, sys, math, random
+from datetime import datetime
 
 DATA_SIZE = 1375
 
@@ -16,9 +17,10 @@ class Sender:
         self.current_window_size = 0
         self.max_window_size = 4
         self.sequence_num_to_ack = {}
+        self.message_cache = []
 
     def log(self, message):
-        sys.stderr.write(message + "\n")
+        sys.stderr.write(str(message) + "\n")
         sys.stderr.flush()
 
     def send(self, message):
@@ -52,20 +54,32 @@ class Sender:
             sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
 
             socks = select.select(sockets, [], [], 0.1)[0]
+            for idx, (msg, time) in enumerate(self.message_cache):
+                # if we haven't recieved an ack and 
+                if not self.sequence_num_to_ack[msg["sequence_number"]] and (datetime.now() - time).total_seconds() > 1:
+                    self.log("Sending message '%s'" % msg)
+                    self.send(msg)
+                    self.message_cache[idx] = (msg, datetime.now())
+
             for conn in socks:
                 if conn == self.socket:
                     k, addr = conn.recvfrom(65535)
                     msg = k.decode('utf-8')
                     msgj = json.loads(msg)
                     self.log("Received message '%s'" % msg)
+                    # If this is a duplicate ack, don't mess with window size or waiting status and just continue to next
+                    if self.sequence_num_to_ack[msgj["num"]]:
+                        continue
                     self.decrease_window_size()
+                    self.log(self.sequence_num_to_ack)
+                    self.log("Window size is '%d'" % self.current_window_size)
                     self.update_waiting_status()
                     self.sequence_num_to_ack[msgj["num"]] = True
 
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
                     # don't exit unless we have recieved an ACK back for every packet we have sent
-                    if len(data) == 0 and self.all_messages_acked():
+                    if len(data) == 0 and self.current_window_size == 0:
                         self.log("All done!")
                         sys.exit(0)
                     elif len(data) == 0:
@@ -73,6 +87,7 @@ class Sender:
                 
                     self.sequence_number = self.sequence_number + 1
                     msg = { "type": "msg", "data": data, "sequence_number": self.sequence_number, "window_size": self.max_window_size }
+                    self.message_cache.append((msg, datetime.now()))
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
                     self.increase_window_size()

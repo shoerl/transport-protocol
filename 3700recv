@@ -8,7 +8,7 @@ class Receiver:
         self.socket.bind(('0.0.0.0', 0))
         self.port = self.socket.getsockname()[1]
         self.log("Bound to port %d" % self.port)
-        self.sequence_nums = []
+        self.sequence_nums = [0]
         self.buffer = []
 
         self.remote_host = None
@@ -44,7 +44,7 @@ class Receiver:
         return self.sequence_nums[-1] + 1 != msg["sequence_number"]
 
     def fix_out_of_order_with_buff(self):
-        #TODO: Maybe sort buffer by sequence num first
+        self.buffer = sorted(self.buffer, key=lambda msg: msg["sequence_number"])
         to_remove = []
         for msg in self.buffer:
             if not self.is_out_of_order(msg):
@@ -67,15 +67,15 @@ class Receiver:
                     self.remote_port = addr[1]
 
                 msg = json.loads(data.decode('utf-8'))
+                self.log("Received data message %s" % msg)
+                self.log(self.sequence_nums)
 
                 # duplicate message, so continue
                 if self.is_duplicate(msg):
                     continue
         
-                self.log("Received data message %s" % msg)
-
                 # if out of order message, try to fix ordering using buffer and then see if it is still out of order
-                if self.sequence_nums and self.is_out_of_order(msg):
+                if self.is_out_of_order(msg):
                     self.fix_out_of_order_with_buff()
                     if self.is_out_of_order(msg):
                         self.buffer.append(msg)
