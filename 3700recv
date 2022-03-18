@@ -52,11 +52,19 @@ class Receiver:
 
         for msg in to_remove:
             self.buffer.remove(msg)
+
+    def msg_has_all_attributes(self, msg):
+        return 'type' in msg and 'data' in msg and 'sequence_number' in msg and 'checksum' in msg
     
+    def msg_has_proper_checksum(self, msg):
+        cksum_rec = msg['checksum']
+        msg.pop('checksum')
+        cksum_calc = sum(json.dumps(msg).encode('utf-8'))
+        return cksum_rec == cksum_calc
 
     def run(self):
         while True:
-            socks = select.select([self.socket], [], [])[0]
+            socks = select.select([self.socket], [], [], 0.1)[0]
             for conn in socks:
                 data, addr = conn.recvfrom(65535)
 
@@ -65,19 +73,14 @@ class Receiver:
                     self.remote_host = addr[0]
                     self.remote_port = addr[1]
 
-                try:
-                    msg = json.loads(data.decode('utf-8'))
-                except:
-                    continue
+                msg = json.loads(data.decode('utf-8'))
 
-                if not ('type' in msg and 'data' in msg and 'sequence_number' in msg and 'checksum' in msg):
+                if not self.msg_has_all_attributes(msg):
                     continue
 
                 self.log("Received data message %s" % msg)
-                cksum_rec = msg['checksum']
-                msg.pop('checksum')
-                cksum_calc = sum(json.dumps(msg).encode('utf-8'))
-                if cksum_calc != cksum_rec:
+
+                if not self.msg_has_proper_checksum(msg):
                     continue
 
                 # Always send ACK
