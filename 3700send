@@ -56,7 +56,7 @@ class Sender:
             socks = select.select(sockets, [], [], 0.1)[0]
             for idx, (msg, time) in enumerate(self.message_cache):
                 # if we haven't recieved an ack and 
-                if not self.sequence_num_to_ack[msg["sequence_number"]] and (datetime.now() - time).total_seconds() > 1:
+                if not self.sequence_num_to_ack[msg["sequence_number"]] and (datetime.now() - time).total_seconds() > 2:
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
                     self.message_cache[idx] = (msg, datetime.now())
@@ -64,22 +64,25 @@ class Sender:
             for conn in socks:
                 if conn == self.socket:
                     k, addr = conn.recvfrom(65535)
-                    msg = k.decode('utf-8')
                     try:
-                        msgj = json.loads(msg)
+                        msg = json.loads(k.decode('utf-8'))
                     except:
                         # corrupted packet
                         continue
-                    self.log("Received message '%s'" % msg)
-                    # If this is a duplicate ack, don't mess with window size or waiting status and just continue to next
-                    if self.sequence_num_to_ack[msgj["num"]]:
+
+                    if not ('type' in msg and 'num' in msg):
                         continue
+
+                    self.log("Received message '%s'" % msg)
+
+                    # If this is a duplicate ack, don't mess with window size or waiting status and just continue to next
+                    if self.sequence_num_to_ack[msg["num"]]:
+                        continue
+
                     self.decrease_window_size()
                     #TODO: delete msg from message cache since we know we got a valid ack back here
-                    #self.log(self.sequence_num_to_ack)
-                    #self.log("Window size is '%d'" % self.current_window_size)
                     self.update_waiting_status()
-                    self.sequence_num_to_ack[msgj["num"]] = True
+                    self.sequence_num_to_ack[msg["num"]] = True
 
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
@@ -92,7 +95,9 @@ class Sender:
                         continue
                 
                     self.sequence_number = self.sequence_number + 1
-                    msg = { "type": "msg", "data": data, "data_length": len(data), "sequence_number": self.sequence_number }
+                    msg = { "type": "msg", "data": data, "sequence_number": self.sequence_number }
+                    cksum = sum(json.dumps(msg).encode('utf-8'))
+                    msg['checksum'] = cksum
                     self.message_cache.append((msg, datetime.now()))
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)

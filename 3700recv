@@ -52,6 +52,7 @@ class Receiver:
 
         for msg in to_remove:
             self.buffer.remove(msg)
+    
 
     def run(self):
         while True:
@@ -68,8 +69,16 @@ class Receiver:
                     msg = json.loads(data.decode('utf-8'))
                 except:
                     continue
+
+                if not ('type' in msg and 'data' in msg and 'sequence_number' in msg and 'checksum' in msg):
+                    continue
+
                 self.log("Received data message %s" % msg)
-                self.log("data length is: %d" % len(msg['data']))
+                cksum_rec = msg['checksum']
+                msg.pop('checksum')
+                cksum_calc = sum(json.dumps(msg).encode('utf-8'))
+                if cksum_calc != cksum_rec:
+                    continue
 
                 # Always send ACK
                 self.send({ "type": "ack", "num": msg["sequence_number"] })
