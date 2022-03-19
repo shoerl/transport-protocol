@@ -15,7 +15,7 @@ class Sender:
         self.waiting = False
         self.sequence_number = 0
         self.current_window_size = 0
-        self.max_window_size = 12
+        self.max_window_size = 4
         self.sequence_num_to_ack = {}
         self.sequence_num_to_time = {}
         self.message_cache = []
@@ -61,8 +61,6 @@ class Sender:
         self.time_to_wait = 2 * (sum(observed_rtts) / len(observed_rtts))
 
     def run(self):
-        last_window_check_time = datetime.now()
-        expected_num_acks = 0
         while True:
             sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
 
@@ -73,22 +71,6 @@ class Sender:
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
                     self.message_cache[idx] = (msg, datetime.now())
-        
-            # if (datetime.now() - last_window_check_time).total_seconds() > self.time_to_wait:
-            #     expected_num_acks += self.max_window_size
-            #     num_acks = 0
-            #     for recieved_bool in self.sequence_num_to_ack.values():
-            #         if recieved_bool:
-            #             num_acks += 1
-            #     if expected_num_acks == num_acks:
-            #         self.max_window_size = self.max_window_size * 2
-            #     else:
-            #         self.max_window_size -= 1
-            #     if self.max_window_size < 1:
-            #         self.max_window_size = 1
-            #     print(self.max_window_size)
-            #     last_window_check_time = datetime.now()
-
           
             for conn in socks:
                 if conn == self.socket:
