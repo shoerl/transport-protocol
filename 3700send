@@ -17,9 +17,10 @@ class Sender:
         self.current_window_size = 0
         self.max_window_size = 2
         self.sequence_num_to_ack = {}
-        self.sequence_num_to_time = {}
+        self.retransmitted = {}
         self.message_cache = []
-        self.time_to_wait = 2
+        self.rtt = 1
+        self.rto = 2
 
     def log(self, message):
         sys.stderr.write(str(message) + "\n")
@@ -41,8 +42,8 @@ class Sender:
         # if our window size is under max, we must have recieved an ack, so slide window forward so we can send another
         if self.current_window_size < self.max_window_size:
             self.waiting = False
-        # if our window size is our max, we don't have any room left in our window, so wait
-        elif self.current_window_size == self.max_window_size:
+        # if our window size is more than or equal to our max, continue
+        else:
             self.waiting = True
     
     def all_messages_acked(self):
@@ -67,10 +68,11 @@ class Sender:
             socks = select.select(sockets, [], [], 0.1)[0]
             for idx, (msg, time) in enumerate(self.message_cache):
                 # if we haven't recieved an ack and it has been longer than the time to wait (which is 2x the rtt)
-                if not self.sequence_num_to_ack[msg["sequence_number"]] and (datetime.now() - time).total_seconds() > self.time_to_wait:
+                if not self.sequence_num_to_ack[msg["sequence_number"]] and (datetime.now() - time).total_seconds() > self.rto:
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
                     self.message_cache[idx] = (msg, datetime.now())
+                    self.retransmitted[msg["sequence_number"]] = True
           
             for conn in socks:
                 if conn == self.socket:
@@ -94,8 +96,12 @@ class Sender:
                     #TODO: delete msg from message cache since we know we got a valid ack back here
                     self.update_waiting_status()
                     self.sequence_num_to_ack[msg["num"]] = True
-                    self.sequence_num_to_time[msg["num"]] = datetime.now()
-                    self.calculate_and_set_rtt()
+                    if self.retransmitted[msg["num"]]:
+                        continue
+                    self.rtt = (.875 * self.rtt) + (.125 * (datetime.now() - self.message_cache[msg['num'] - 1][1]).total_seconds())
+                    self.rto = 2 * self.rtt
+                    self.log(self.rtt)
+                    self.log(self.rto)
 
 
                 elif conn == sys.stdin:
@@ -111,6 +117,7 @@ class Sender:
                     self.sequence_number = self.sequence_number + 1
                     msg = { "type": "msg", "data": data, "sequence_number": self.sequence_number }
                     cksum = sum(json.dumps(msg).encode('utf-8'))
+                    self.log(cksum)
                     msg['checksum'] = cksum
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
@@ -118,6 +125,7 @@ class Sender:
                     self.increase_window_size()
                     self.update_waiting_status()
                     self.sequence_num_to_ack[self.sequence_number] = False
+                    self.retransmitted[self.sequence_number] = False
 
         return
 
