@@ -15,7 +15,7 @@ class Sender:
         self.waiting = False
         self.sequence_number = 0
         self.current_window_size = 0
-        self.max_window_size = 4
+        self.max_window_size = 2
         self.sequence_num_to_ack = {}
         self.sequence_num_to_time = {}
         self.message_cache = []

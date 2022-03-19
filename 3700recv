@@ -84,6 +84,7 @@ class Receiver:
                     continue
 
                 # Always send ACK
+                #TODO : implement checksum for ack
                 self.send({ "type": "ack", "num": msg["sequence_number"] })
 
                 # duplicate message, so continue
