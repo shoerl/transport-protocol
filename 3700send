@@ -15,7 +15,8 @@ class Sender:
         self.waiting = False
         self.sequence_number = 0
         self.current_window_size = 0
-        self.max_window_size = 2
+        self.max_window_size = 1
+        self.ssthres = 4
         self.sequence_num_to_ack = {}
         self.sequence_num_to_time = {}
         self.message_cache = []
@@ -41,8 +42,8 @@ class Sender:
         # if our window size is under max, we must have recieved an ack, so slide window forward so we can send another
         if self.current_window_size < self.max_window_size:
             self.waiting = False
-        # if our window size is our max, we don't have any room left in our window, so wait
-        elif self.current_window_size == self.max_window_size:
+        # otherwise our current window size is equal to or above or max, so wait
+        else:
             self.waiting = True
     
     def all_messages_acked(self):
@@ -68,9 +69,13 @@ class Sender:
             for idx, (msg, time) in enumerate(self.message_cache):
                 # if we haven't recieved an ack and it has been longer than the time to wait (which is 2x the rtt)
                 if not self.sequence_num_to_ack[msg["sequence_number"]] and (datetime.now() - time).total_seconds() > self.time_to_wait:
+                    self.log("Max window size: %d , Current window size: %d " % (self.max_window_size, self.current_window_size))
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
+                    #TODO: implement ignoring retransmitted packets in rtt calculations
                     self.message_cache[idx] = (msg, datetime.now())
+                    self.ssthres = self.max_window_size / 2
+                    self.max_window_size = 1
           
             for conn in socks:
                 if conn == self.socket:
@@ -84,8 +89,9 @@ class Sender:
                     if not ('type' in msg and 'num' in msg):
                         continue
 
+                    #TODO: proper checksum handling for acks
+
                     self.log("Received message '%s'" % msg)
-                    self.log(self.message_cache[msg['num'] - 1])
                     # If this is a duplicate ack, don't mess with window size or waiting status and just continue to next
                     if self.sequence_num_to_ack[msg["num"]]:
                         continue
@@ -96,6 +102,12 @@ class Sender:
                     self.sequence_num_to_ack[msg["num"]] = True
                     self.sequence_num_to_time[msg["num"]] = datetime.now()
                     self.calculate_and_set_rtt()
+                    if self.max_window_size < self.ssthres:
+                        self.max_window_size += 1
+                    else:
+                        self.max_window_size += (1 / self.max_window_size)
+                    self.log("max window size {}".format(self.max_window_size))
+                    self.log("ssthres is {}".format(self.ssthres))
 
 
                 elif conn == sys.stdin:
@@ -112,6 +124,7 @@ class Sender:
                     msg = { "type": "msg", "data": data, "sequence_number": self.sequence_number }
                     cksum = sum(json.dumps(msg).encode('utf-8'))
                     msg['checksum'] = cksum
+                    self.log("Max window size: %d , Current window size: %d " % (self.max_window_size, self.current_window_size))
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
                     self.message_cache.append((msg, datetime.now()))
