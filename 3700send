@@ -15,9 +15,11 @@ class Sender:
         self.waiting = False
         self.sequence_number = 0
         self.current_window_size = 0
-        self.max_window_size = 4
+        self.max_window_size = 12
         self.sequence_num_to_ack = {}
+        self.sequence_num_to_time = {}
         self.message_cache = []
+        self.time_to_wait = 2
 
     def log(self, message):
         sys.stderr.write(str(message) + "\n")
@@ -48,19 +50,46 @@ class Sender:
             if not ack_status:
                 return False
         return True
+    
+    def calculate_and_set_rtt(self):
+        # observed round trip times, in seconds
+        observed_rtts = []
+        for s_num, time_recieved in self.sequence_num_to_time.items():
+            time_sent = self.message_cache[s_num - 1][1]
+            observed_rtts.append((time_recieved - time_sent).total_seconds())
+        
+        self.time_to_wait = 2 * (sum(observed_rtts) / len(observed_rtts))
 
     def run(self):
+        last_window_check_time = datetime.now()
+        expected_num_acks = 0
         while True:
             sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
 
             socks = select.select(sockets, [], [], 0.1)[0]
             for idx, (msg, time) in enumerate(self.message_cache):
-                # if we haven't recieved an ack and 
-                if not self.sequence_num_to_ack[msg["sequence_number"]] and (datetime.now() - time).total_seconds() > 2:
+                # if we haven't recieved an ack and it has been longer than the time to wait (which is 2x the rtt)
+                if not self.sequence_num_to_ack[msg["sequence_number"]] and (datetime.now() - time).total_seconds() > self.time_to_wait:
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
                     self.message_cache[idx] = (msg, datetime.now())
+        
+            # if (datetime.now() - last_window_check_time).total_seconds() > self.time_to_wait:
+            #     expected_num_acks += self.max_window_size
+            #     num_acks = 0
+            #     for recieved_bool in self.sequence_num_to_ack.values():
+            #         if recieved_bool:
+            #             num_acks += 1
+            #     if expected_num_acks == num_acks:
+            #         self.max_window_size = self.max_window_size * 2
+            #     else:
+            #         self.max_window_size -= 1
+            #     if self.max_window_size < 1:
+            #         self.max_window_size = 1
+            #     print(self.max_window_size)
+            #     last_window_check_time = datetime.now()
 
+          
             for conn in socks:
                 if conn == self.socket:
                     k, addr = conn.recvfrom(65535)
@@ -74,7 +103,7 @@ class Sender:
                         continue
 
                     self.log("Received message '%s'" % msg)
-
+                    self.log(self.message_cache[msg['num'] - 1])
                     # If this is a duplicate ack, don't mess with window size or waiting status and just continue to next
                     if self.sequence_num_to_ack[msg["num"]]:
                         continue
@@ -83,6 +112,9 @@ class Sender:
                     #TODO: delete msg from message cache since we know we got a valid ack back here
                     self.update_waiting_status()
                     self.sequence_num_to_ack[msg["num"]] = True
+                    self.sequence_num_to_time[msg["num"]] = datetime.now()
+                    self.calculate_and_set_rtt()
+
 
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
@@ -98,9 +130,9 @@ class Sender:
                     msg = { "type": "msg", "data": data, "sequence_number": self.sequence_number }
                     cksum = sum(json.dumps(msg).encode('utf-8'))
                     msg['checksum'] = cksum
-                    self.message_cache.append((msg, datetime.now()))
                     self.log("Sending message '%s'" % msg)
                     self.send(msg)
+                    self.message_cache.append((msg, datetime.now()))
                     self.increase_window_size()
                     self.update_waiting_status()
                     self.sequence_num_to_ack[self.sequence_number] = False
