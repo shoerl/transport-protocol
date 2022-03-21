@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math
+import argparse, socket, time, json, select, struct, sys, math, zlib
 
 class Receiver:
     def __init__(self):
@@ -10,11 +10,11 @@ class Receiver:
         self.log("Bound to port %d" % self.port)
         self.sequence_nums = [0]
         self.buffer = []
-
         self.remote_host = None
         self.remote_port = None
 
     def send(self, message):
+        self.log("Sending message '%s'" % message)
         self.socket.sendto(json.dumps(message).encode('utf-8'), (self.remote_host, self.remote_port))
 
     def log(self, message):
@@ -42,7 +42,6 @@ class Receiver:
         return self.sequence_nums[-1] + 1 != msg["sequence_number"]
 
     def fix_out_of_order_with_buff(self):
-        self.buffer = sorted(self.buffer, key=lambda msg: msg["sequence_number"])
         to_remove = []
         for msg in self.buffer:
             if not self.is_out_of_order(msg):
@@ -59,7 +58,7 @@ class Receiver:
     def msg_has_proper_checksum(self, msg):
         cksum_rec = msg['checksum']
         msg.pop('checksum')
-        cksum_calc = sum(json.dumps(msg).encode('utf-8'))
+        cksum_calc = zlib.crc32(json.dumps(msg).encode('utf-8'))
         return cksum_rec == cksum_calc
 
     def run(self):
@@ -73,31 +72,42 @@ class Receiver:
                     self.remote_host = addr[0]
                     self.remote_port = addr[1]
 
-                msg = json.loads(data.decode('utf-8'))
+                try:
+                    msg = json.loads(data.decode('utf-8'))
+                except:
+                    # corrupted packet
+                    continue
 
-                if not self.msg_has_all_attributes(msg):
+                # Corruption check
+                if not (self.msg_has_all_attributes(msg) and self.msg_has_proper_checksum(msg)):
+                    self.log("Recieved corrupted message '%s'" % msg)
                     continue
 
                 self.log("Received data message %s" % msg)
 
-                if not self.msg_has_proper_checksum(msg):
-                    continue
+                # checksum for ack
+                ack = { "type": "ack", "num": msg["sequence_number"] }
+                ack["checksum"] = zlib.crc32(json.dumps(ack).encode('utf-8'))
 
-                # Always send ACK
-                #TODO : implement checksum for ack
-                self.send({ "type": "ack", "num": msg["sequence_number"] })
+                # Always send ACK unless it is corrupted packet
+                # Note we send ACK's even if it is duplicate, as duplicates may be the result of lost ACK's or actual duplication
+                # and it would be complicated to distinguish between the two accurately
+                self.send(ack)
 
                 # duplicate message, so continue
                 if self.is_duplicate(msg):
+                    self.log("Not printing message due to duplication '%s'" % msg)
                     continue
         
-
-                # if out of order message, try to fix ordering using buffer and then see if it is still out of order
+                # if out of order message, add to buffer and sort buffer
                 if self.is_out_of_order(msg):
-                    self.fix_out_of_order_with_buff()
-                    if self.is_out_of_order(msg):
-                        self.buffer.append(msg)
-                        continue
+                    self.log("Not printing message currently due to out of order '%s'" % msg)
+                    self.buffer.append(msg)
+                    # If you wanted to scale this up / use with a LOT of packets doing the inserting with sorted list approach
+                    # may be better instead of sorting this whole list everytime, but for our purposes/test cases the difference
+                    # is negligable
+                    self.buffer = sorted(self.buffer, key=lambda msg: msg["sequence_number"])
+                    continue
     
                 self.update_sequence_nums(msg)
                 self.print_message(msg)
