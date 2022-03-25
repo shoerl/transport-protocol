@@ -22,11 +22,14 @@ class Sender:
         self.log("Sender starting up using port %s" % self.remote_port)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
+        # waiting status which we will use to effectively buffer our STDIN
         self.waiting = False
+        # current sequence number
         self.sequence_number = 0
+        # current window size (sliding window)
         self.current_window_size = 0
-        self.max_window_size = 12
-        self.ssthres = 32
+        # max window size (sliding window)
+        self.max_window_size = 8
         # { Sequence number: bool representing whether we have recieved an ack for that sequence number }
         # Needs to be seperate from message cache for duplication detection
         self.sequence_num_to_ack = {}
@@ -39,23 +42,55 @@ class Sender:
         self.rto = 2
 
     def log(self, message):
+        """
+        Logs message to stderror
+        Args:
+            message - message we want to log
+        """
         sys.stderr.write(str(message) + "\n")
         sys.stderr.flush()
 
     def send(self, message):
+        """
+        Sends message to host/port we store in class
+        Args:
+            message - JSON of message we are sending
+        """
         self.log("Sending message '%s'" % message)
         self.socket.sendto(json.dumps(message).encode('utf-8'), (self.host, self.remote_port))
 
     def decrease_current_window_size(self):
+        """
+        Decrease our current window size by 1
+        """
         # We recieved an ack back, so we know reciever recieved message, so take it out of our window
         # effectively making our window size smaller by 1
         self.current_window_size -= 1
 
     def increase_current_window_size(self):
+        """
+        Increase our current window size by 1
+        """
         # We send a message out, so we have another message in our network, so increase window size by 1
         self.current_window_size += 1
 
+    def decrease_max_window_size(self):
+        """
+        Decrease our max window size (multiplicative decrease)
+        """
+        self.max_window_size = self.max_window_size / 2
+
+    def increase_max_window_size(self):
+        """
+        Increase our max window size (additive increase)
+        """
+        self.max_window_size += 1
+
     def update_waiting_status(self):
+        """
+        Update our waiting status by looking at our current window size in relation to
+        our max window size.
+        """
         # if our window size is under max, we must have recieved an ack, so slide window forward so we can send another
         if self.current_window_size < self.max_window_size:
             self.waiting = False
@@ -64,35 +99,51 @@ class Sender:
             self.waiting = True
 
     def ack_has_all_attributes(self, ack):
-    # checks ack has required fields to be valid
+        """
+        Does the given ACK have all of the required attributes/fields present?
+        Args:
+            ack - dict representing ack message
+        """
         return 'type' in ack and 'num' in ack and 'checksum' in ack
 
     def ack_has_proper_checksum(self, ack):
-    # checks ack has acceptable checksum to be valid
+        """
+        Does the given ACK have the checksum which it is advertising?
+        Note: This method removes the checksum attribute/field from the ACK
+              (This is the only time we use it so no need to add it back)
+        Args:
+            ack - dict representing ack message
+        """
         cksum_rec = ack['checksum']
         ack.pop('checksum')
+        # calculate checksum using zlib crc32 checksum method
         cksum_calc = zlib.crc32(json.dumps(ack).encode('utf-8'))
+        # does the checksum recieved/advertised equal the calculated checksum?
         return cksum_rec == cksum_calc
-
-    # multiplicative decrease for ssthres, drop max window size to 1
-    def decrease_ssthres_and_max_window_size(self):
-        self.ssthres = self.max_window_size / 2
-        self.max_window_size = 1
-
-    # increase max window/congestion window size since we recieved a new ack
-    def increase_max_window_size(self):
-        if self.max_window_size < self.ssthres:
-            self.max_window_size += 1
-        else:
-            self.max_window_size += (1 / self.max_window_size)
         
     def is_duplicate_ack(self, ack):
+        """
+        Is the given ACK a duplicate?
+        Args:
+            ack - dict representing ack message
+        """
         return self.sequence_num_to_ack[ack['num']]
 
     def has_been_retransmitted(self, sequence_num):
+        """
+        Has the packet associated with the given sequence number been retransmitted ever?
+        Args:
+            sequence_num - num representing sequence num
+        """
         return self.message_cache[sequence_num][2]
 
     def update_rtt_and_rto(self, sequence_num):
+        """
+        Using packet associated with given sequence number, update the RTT and RTO using formula given in class
+        Args:
+            sequence_num - num representing sequence num (for looking up time sent in message cache)
+        """
+        # (.875 * current_rtt) + (.125 * (time_recieved - time_sent))
         self.rtt = (.875 * self.rtt) + (.125 * (datetime.now() - self.message_cache[sequence_num][1]).total_seconds())
         self.rto = 2 * self.rtt
 
@@ -101,15 +152,16 @@ class Sender:
             sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
 
             socks = select.select(sockets, [], [], 0.1)[0]
+
+            # check if any packets need to be retransmitted and retransmit them if so
             for sequence_num, (msg, time, retransmitted) in self.message_cache.items():
                 # if we haven't recieved an ack and it has been longer than the time to wait (which is 2x the rtt)
                 if not self.sequence_num_to_ack[sequence_num] and (datetime.now() - time).total_seconds() > self.rto:
-                    #self.log("Max window size: %d , Current window size: %d " % (self.max_window_size, self.current_window_size))
                     self.send(msg)
                     # Update last sent time in message cache & flag it as being retransmitted so we can ignore it in RTT calculations
                     self.message_cache[sequence_num] = (msg, datetime.now(), True)
                     # We know a packet got dropped, so do multiplicative decrease for ssthres and drop max window size to 1
-                    self.decrease_ssthres_and_max_window_size()
+                    self.decrease_max_window_size()
           
             for conn in socks:
                 # get message sent from sender's socket
@@ -146,8 +198,6 @@ class Sender:
                     # Only do rtt and rto calculations if it is a packet which hasn't been retransmitted            
                     if not self.has_been_retransmitted(msg['num']):
                         self.update_rtt_and_rto(msg['num'])
-                        #self.log("max window size {}".format(self.max_window_size))
-                        #self.log("ssthres is {}".format(self.ssthres))
 
                     # Delete corresponding message from message cache since we got a valid ack for it 
                     self.message_cache.pop(msg['num'])

@@ -81,6 +81,7 @@ class Receiver:
         """
         cksum_rec = msg['checksum']
         msg.pop('checksum')
+        # calculate checksum using zlib crc32 checksum method
         cksum_calc = zlib.crc32(json.dumps(msg).encode('utf-8'))
         return cksum_rec == cksum_calc
 
