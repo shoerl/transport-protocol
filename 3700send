@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math, random, zlib
+import argparse, socket, json, select, sys, zlib
 from datetime import datetime
 
 DATA_SIZE = 1375

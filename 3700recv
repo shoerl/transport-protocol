@@ -1,14 +1,19 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math, zlib
+import argparse, socket, json, select, sys, zlib
 
 class Receiver:
+    """
+    Class representing the Receiver in a Transport Protocol.
+    """
     def __init__(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
         self.port = self.socket.getsockname()[1]
         self.log("Bound to port %d" % self.port)
+        # sequence num collection to track sequence numbers of received messages in order
         self.sequence_nums = [0]
+        # message buffer to track which messages need to be verified received in order
         self.buffer = []
         self.remote_host = None
         self.remote_port = None
@@ -28,40 +33,61 @@ class Receiver:
         # Print out the data to stdout
         print(msg["data"], end='', flush=True)
      
-
     def is_sequence_num_in_buff(self, sequence_num):
-        for msg in self.buffer:
-            if sequence_num == msg["sequence_number"]:
-                return True
-        return False
+        """ 
+        Checks whether the given sequence number is in the message buffer.
+        """
+        return any(sequence_num == msg["sequence_number"] for msg in self.buffer)
 
     def is_duplicate(self, msg):
+        """
+        Determines if the given message is a duplicate.
+        """
+        # checks if this message's sequence number is in this receiver's sequence numbers or in the buffer
         return msg["sequence_number"] in self.sequence_nums or self.is_sequence_num_in_buff(msg["sequence_number"])
 
     def is_out_of_order(self, msg):
+        """
+        Determines if the given message is out of order. 
+        """
         return self.sequence_nums[-1] + 1 != msg["sequence_number"]
 
     def fix_out_of_order_with_buff(self):
+        """
+        Filters receiver's message buffer for messages received in correct order, and updates receiver's sequence
+        number collection accordingly.
+        """
         to_remove = []
         for msg in self.buffer:
+            # if message in buffer is in order, add its number to the sequence num collection, and mark to remove it
             if not self.is_out_of_order(msg):
                 self.update_sequence_nums(msg)
                 self.print_message(msg)
                 to_remove.append(msg)
-
+        # remove messages in buffer that are received in order
         for msg in to_remove:
             self.buffer.remove(msg)
 
     def msg_has_all_attributes(self, msg):
+        """
+        Determines if given message has 'type', 'data' 'sequence_number' and 'checksum' fields, used for message
+        validity checks.
+        """
         return 'type' in msg and 'data' in msg and 'sequence_number' in msg and 'checksum' in msg
     
     def msg_has_proper_checksum(self, msg):
+        """ 
+        Determines if given message has a correct checksum, for error detection.
+        """
         cksum_rec = msg['checksum']
         msg.pop('checksum')
         cksum_calc = zlib.crc32(json.dumps(msg).encode('utf-8'))
         return cksum_rec == cksum_calc
 
     def run(self):
+        """
+        Entrypoint for the receiver. 
+        """
         while True:
             socks = select.select([self.socket], [], [], 0.1)[0]
             for conn in socks:
@@ -78,14 +104,14 @@ class Receiver:
                     # corrupted packet
                     continue
 
-                # Corruption check
+                # Corruption check - are all attributes present with a correct checksum?
                 if not (self.msg_has_all_attributes(msg) and self.msg_has_proper_checksum(msg)):
                     self.log("Recieved corrupted message '%s'" % msg)
                     continue
 
                 self.log("Received data message %s" % msg)
 
-                # checksum for ack
+                # create ack message with checksum
                 ack = { "type": "ack", "num": msg["sequence_number"] }
                 ack["checksum"] = zlib.crc32(json.dumps(ack).encode('utf-8'))
 

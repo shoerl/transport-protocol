@@ -9,6 +9,10 @@ SENDER:
 - Checks for message corruption 
 - Uses a Message Cache to track info of messages that have not been acknowledged yet
 RECEIVER:
+- Uses a Message Buffer to track accurate order of messages, holding place for messages to be identified as ordered correctly or not
+- Uses a list of Sequence Numbers to compare against order of messages received
+- Reorders messages when not received in correct order
+- 
 
 ## Challenges 
 
@@ -19,7 +23,7 @@ RECEIVER:
 - 
 
 Receiver: Out of order handling
-- is a performance enhancement!!!
+- A performance enhancement in our message buffer - removing unnecessary messages once they have been dealt with (re-ordered).
 
         
 
