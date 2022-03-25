@@ -6,7 +6,17 @@ from datetime import datetime
 DATA_SIZE = 1375
 
 class Sender:
+    """
+    Class representing the Sender in a Transport Protocol.
+    """
+
     def __init__(self, host, port):
+        """
+        Initializes Sender.
+        Args:
+            host - str host to connect to
+            port - int port to connect to
+        """
         self.host = host
         self.remote_port = int(port)
         self.log("Sender starting up using port %s" % self.remote_port)
@@ -23,7 +33,9 @@ class Sender:
         # { Sequence number: (message json, time message was last sent, bool representing if packet has been retransmitted) }
         # Corresponds to data we need to keep track of before we recieve an ACK for said packet
         self.message_cache = {}
+        # round trip time initializes at 1 second
         self.rtt = 1
+        # time to timeout initializes at 2 * RTT seconds
         self.rto = 2
 
     def log(self, message):
@@ -52,9 +64,11 @@ class Sender:
             self.waiting = True
 
     def ack_has_all_attributes(self, ack):
+    # checks ack has required fields to be valid
         return 'type' in ack and 'num' in ack and 'checksum' in ack
 
     def ack_has_proper_checksum(self, ack):
+    # checks ack has acceptable checksum to be valid
         cksum_rec = ack['checksum']
         ack.pop('checksum')
         cksum_calc = zlib.crc32(json.dumps(ack).encode('utf-8'))
@@ -98,6 +112,7 @@ class Sender:
                     self.decrease_ssthres_and_max_window_size()
           
             for conn in socks:
+                # get message sent from sender's socket
                 if conn == self.socket:
                     k, addr = conn.recvfrom(65535)
                     try:
@@ -107,7 +122,8 @@ class Sender:
                         continue
 
                     self.log("Received message '%s'" % msg)
-
+                    
+                    # Corrupted message check
                     if not (self.ack_has_all_attributes(msg) and self.ack_has_proper_checksum(msg)):
                         self.log("Ignoring message due to corruption '%s'" % msg)
                         continue
@@ -117,6 +133,7 @@ class Sender:
                         self.log("Ignoring message due to duplication '%s'" % msg)
                         continue
 
+                    # update window size and waiting status according to msg
                     self.decrease_current_window_size()
                     self.update_waiting_status()
 
@@ -157,7 +174,6 @@ class Sender:
                     self.increase_current_window_size()
                     self.update_waiting_status()
                     self.sequence_num_to_ack[self.sequence_number] = False
-
         return
 
 if __name__ == "__main__":
