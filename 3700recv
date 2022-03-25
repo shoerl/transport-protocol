@@ -59,7 +59,7 @@ class Receiver:
         """
         to_remove = []
         for msg in self.buffer:
-            # if message in buffer is in order, add its number to the sequence num collection, and mark to remove it
+            # if message in buffer is in order, add its number to the sequence num collection, print it, and mark to remove it
             if not self.is_out_of_order(msg):
                 self.update_sequence_nums(msg)
                 self.print_message(msg)
@@ -78,11 +78,16 @@ class Receiver:
     def msg_has_proper_checksum(self, msg):
         """ 
         Determines if given message has a correct checksum, for error detection.
+        Note: This method removes the checksum attribute/field from the message
+              (This is the only time we use it so no need to add it back)
+        Args:
+            msg - dict representing recieved message
         """
         cksum_rec = msg['checksum']
         msg.pop('checksum')
         # calculate checksum using zlib crc32 checksum method
         cksum_calc = zlib.crc32(json.dumps(msg).encode('utf-8'))
+        # does the checksum recieved/advertised equal the calculated checksum?
         return cksum_rec == cksum_calc
 
     def run(self):
@@ -114,6 +119,8 @@ class Receiver:
 
                 # create ack message with checksum
                 ack = { "type": "ack", "num": msg["sequence_number"] }
+                # Add checksum field for crc 32bit integer checksum calculated over whole ack
+                # (obviously excluding checksum field)
                 ack["checksum"] = zlib.crc32(json.dumps(ack).encode('utf-8'))
 
                 # Always send ACK unless it is corrupted packet
@@ -136,10 +143,11 @@ class Receiver:
                     self.buffer = sorted(self.buffer, key=lambda msg: msg["sequence_number"])
                     continue
     
+                # we know this is a valid message and in the right order, so update sequence nums and print it
                 self.update_sequence_nums(msg)
                 self.print_message(msg)
 
-                # try to fix out of order msg again (performance enhancement in practice)
+                # Attempt to fix/print any previously out of order messages since our sequence numbers have been updated
                 self.fix_out_of_order_with_buff()
         return
 

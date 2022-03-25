@@ -33,7 +33,7 @@ class Sender:
         # { Sequence number: bool representing whether we have recieved an ack for that sequence number }
         # Needs to be seperate from message cache for duplication detection
         self.sequence_num_to_ack = {}
-        # { Sequence number: (message json, time message was last sent, bool representing if packet has been retransmitted) }
+        # { Sequence number: (message dict, time message was last sent, bool representing if packet has been retransmitted) }
         # Corresponds to data we need to keep track of before we recieve an ACK for said packet
         self.message_cache = {}
         # round trip time initializes at 1 second
@@ -147,22 +147,27 @@ class Sender:
         self.rtt = (.875 * self.rtt) + (.125 * (datetime.now() - self.message_cache[sequence_num][1]).total_seconds())
         self.rto = 2 * self.rtt
 
+    def retransmit_if_necessary(self):
+        """
+        Check if any packets need to be retransmitted and retransmit them if so
+        """
+        for sequence_num, (msg, time, retransmitted) in self.message_cache.items():
+            # if we haven't recieved an ack and it has been longer than the time to wait (which is 2x the rtt)
+            if not self.sequence_num_to_ack[sequence_num] and (datetime.now() - time).total_seconds() > self.rto:
+                self.send(msg)
+                # Update last sent time in message cache & flag it as being retransmitted so we can ignore it in RTT calculations
+                self.message_cache[sequence_num] = (msg, datetime.now(), True)
+                # We know a packet got dropped, so do multiplicative decrease for ssthres and drop max window size to 1
+                self.decrease_max_window_size()
+
     def run(self):
         while True:
             sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
 
             socks = select.select(sockets, [], [], 0.1)[0]
 
-            # check if any packets need to be retransmitted and retransmit them if so
-            for sequence_num, (msg, time, retransmitted) in self.message_cache.items():
-                # if we haven't recieved an ack and it has been longer than the time to wait (which is 2x the rtt)
-                if not self.sequence_num_to_ack[sequence_num] and (datetime.now() - time).total_seconds() > self.rto:
-                    self.send(msg)
-                    # Update last sent time in message cache & flag it as being retransmitted so we can ignore it in RTT calculations
-                    self.message_cache[sequence_num] = (msg, datetime.now(), True)
-                    # We know a packet got dropped, so do multiplicative decrease for ssthres and drop max window size to 1
-                    self.decrease_max_window_size()
-          
+            self.retransmit_if_necessary()
+
             for conn in socks:
                 # get message sent from sender's socket
                 if conn == self.socket:
