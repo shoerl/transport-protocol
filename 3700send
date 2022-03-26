@@ -157,7 +157,7 @@ class Sender:
                 self.send(msg)
                 # Update last sent time in message cache & flag it as being retransmitted so we can ignore it in RTT calculations
                 self.message_cache[sequence_num] = (msg, datetime.now(), True)
-                # We know a packet got dropped, so do multiplicative decrease for ssthres and drop max window size to 1
+                # We know a packet got dropped, so decrease max window size
                 self.decrease_max_window_size()
 
     def run(self):
@@ -166,6 +166,7 @@ class Sender:
 
             socks = select.select(sockets, [], [], 0.1)[0]
 
+            # retransmit if necessary, we need to do this regardless of 
             self.retransmit_if_necessary()
 
             for conn in socks:
@@ -225,9 +226,15 @@ class Sender:
                     # Add to message cache which is all the info we care about until it has been ACKed
                     # contains (message json, time message was last sent, bool representing if packet has been retransmitted)
                     self.message_cache[msg['sequence_number']] = (msg, datetime.now(), False)
+
+                    # send message
                     self.send(msg)
+
+                    # increase current window size since we sent packet
                     self.increase_current_window_size()
+                    # our current window size has changed, so update waiting status
                     self.update_waiting_status()
+                    # we haven't recieved an ack back for this packet yet, so mark it as such
                     self.sequence_num_to_ack[self.sequence_number] = False
         return
 
