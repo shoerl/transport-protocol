@@ -26,7 +26,7 @@ RECEIVER:
 - Uses a Message Buffer to track accurate order of messages, holding place for messages to be identified as ordered correctly or not
 - Uses a list of Sequence Numbers to detect data packet duplication and enforce correct ordering of data messages when printing
 - Reorders messages when not received in correct order (buffers them until they are in order)
-- Sends selective ACKs
+- Sends ACKs for every packet recieved
 - Checks and handles data packet corruption
     - Using Try/Except to catch data packets which are not valid JSON's
     - Using checksum to detect corruption within data packets (CRC32 Checksum using ZLib library)
