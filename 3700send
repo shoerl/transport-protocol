@@ -166,7 +166,7 @@ class Sender:
 
             socks = select.select(sockets, [], [], 0.1)[0]
 
-            # retransmit if necessary, we need to do this regardless of 
+            # retransmit if necessary, we need to do this regardless of whether or not we have data to send / ACKS recieved
             self.retransmit_if_necessary()
 
             for conn in socks:
@@ -224,7 +224,7 @@ class Sender:
                     # (obviously excluding checksum field)
                     msg['checksum'] = zlib.crc32(json.dumps(msg).encode('utf-8'))
                     # Add to message cache which is all the info we care about until it has been ACKed
-                    # contains (message json, time message was last sent, bool representing if packet has been retransmitted)
+                    # contains (message dict, time message was last sent, bool representing if packet has been retransmitted)
                     self.message_cache[msg['sequence_number']] = (msg, datetime.now(), False)
 
                     # send message
