@@ -27,6 +27,11 @@ class Receiver:
         sys.stderr.flush()
 
     def update_sequence_nums(self, msg):
+        """
+        Add the sequence number from the given message to the receiver's sequence number collection.
+        Args:
+            msg - dict message with sequence number
+        """
         self.sequence_nums.append(msg["sequence_number"])
 
     def print_message(self, msg):
@@ -36,12 +41,16 @@ class Receiver:
     def is_sequence_num_in_buff(self, sequence_num):
         """ 
         Checks whether the given sequence number is in the message buffer.
+        Args:
+            sequence_num - int sequence number to check 
         """
         return any(sequence_num == msg["sequence_number"] for msg in self.buffer)
 
     def is_duplicate(self, msg):
         """
         Determines if the given message is a duplicate.
+        Args:
+            msg - dict message with sequence number
         """
         # checks if this message's sequence number is in this receiver's sequence numbers or in the buffer
         return msg["sequence_number"] in self.sequence_nums or self.is_sequence_num_in_buff(msg["sequence_number"])
@@ -49,6 +58,8 @@ class Receiver:
     def is_out_of_order(self, msg):
         """
         Determines if the given message is out of order. 
+        Args:
+            msg - dict message with sequence number
         """
         return self.sequence_nums[-1] + 1 != msg["sequence_number"]
 
@@ -72,6 +83,8 @@ class Receiver:
         """
         Determines if given message has 'type', 'data' 'sequence_number' and 'checksum' fields, used for message
         validity checks.
+        Args:
+            msg - dict message
         """
         return 'type' in msg and 'data' in msg and 'sequence_number' in msg and 'checksum' in msg
     
